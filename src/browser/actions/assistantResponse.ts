@@ -106,6 +106,8 @@ export async function waitForAssistantResponse(
       ) {
         evaluation = await evaluationPromise;
       } else if (source === "poll") {
+        evaluationPromise.catch(() => undefined);
+        await terminateRuntimeExecution(Runtime);
         throw error;
       } else if (source === "evaluation") {
         const recovered = await recoverAssistantResponse(Runtime, timeoutMs, logger, minTurnIndex);
