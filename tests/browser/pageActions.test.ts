@@ -25,11 +25,11 @@ describe("ensureModelSelection", () => {
   test("logs when model already selected", async () => {
     const runtime = {
       evaluate: vi.fn().mockResolvedValue({
-        result: { value: { status: "already-selected", label: "GPT-5.2 Pro" } },
+        result: { value: { status: "already-selected", label: "Pro" } },
       }),
     } as unknown as ChromeClient["Runtime"];
-    await expect(ensureModelSelection(runtime, "GPT-5.2 Pro", logger)).resolves.toBeUndefined();
-    expect(logger).toHaveBeenCalledWith("Model picker: GPT-5.2 Pro");
+    await expect(ensureModelSelection(runtime, "Pro", logger)).resolves.toBeUndefined();
+    expect(logger).toHaveBeenCalledWith("Model picker: Pro");
   });
 
   test("throws when option missing", async () => {
@@ -47,14 +47,12 @@ describe("ensureModelSelection", () => {
         result: {
           value: {
             status: "option-not-found",
-            hint: { temporaryChat: true, availableOptions: ["Auto", "Thinking"] },
+            hint: { temporaryChat: true, availableOptions: ["Instant", "Thinking", "Pro"] },
           },
         },
       }),
     } as unknown as ChromeClient["Runtime"];
-    await expect(ensureModelSelection(runtime, "GPT-5.2 Pro", logger)).rejects.toThrow(
-      /Temporary Chat/i,
-    );
+    await expect(ensureModelSelection(runtime, "Pro", logger)).rejects.toThrow(/Temporary Chat/i);
   });
 
   test("throws when button missing", async () => {
@@ -64,6 +62,50 @@ describe("ensureModelSelection", () => {
     await expect(ensureModelSelection(runtime, "Instant", logger)).rejects.toThrow(
       /Unable to locate the ChatGPT model selector button/,
     );
+  });
+
+  test("uses trusted clicks when Input is available", async () => {
+    const runtime = {
+      evaluate: vi
+        .fn()
+        .mockResolvedValueOnce({
+          result: { value: { status: "menu-closed", button: { x: 10, y: 20 } } },
+        })
+        .mockResolvedValueOnce({
+          result: { value: { status: "option-ready", option: { x: 30, y: 40 } } },
+        })
+        .mockResolvedValueOnce({
+          result: { value: { status: "already-selected", label: "Thinking" } },
+        }),
+    } as unknown as ChromeClient["Runtime"];
+    const input = {
+      dispatchMouseEvent: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ChromeClient["Input"];
+
+    await expect(
+      ensureModelSelection(runtime, "Thinking", logger, "select", input),
+    ).resolves.toBeUndefined();
+
+    expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(6);
+    expect(logger).toHaveBeenCalledWith("Model picker: Thinking");
+  });
+
+  test("reads current model without clicking when trusted path keeps the active model", async () => {
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: { value: { status: "already-selected", label: "Extended Pro" } },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+    const input = {
+      dispatchMouseEvent: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ChromeClient["Input"];
+
+    await expect(
+      ensureModelSelection(runtime, "Pro", logger, "current", input),
+    ).resolves.toBeUndefined();
+
+    expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
+    expect(logger).toHaveBeenCalledWith("Model picker: Extended Pro");
   });
 });
 

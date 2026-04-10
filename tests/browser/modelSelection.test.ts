@@ -9,6 +9,18 @@ const expectContains = (arr: string[], value: string) => {
 };
 
 describe("browser model selection matchers", () => {
+  it("accepts bare Pro picker labels for gpt-5.4-pro", () => {
+    const { labelTokens } = buildModelMatchersLiteralForTest("Pro");
+    expect(labelTokens).toContain("pro");
+    expect(labelTokens).toContain("research grade intelligence");
+  });
+
+  it("accepts bare Thinking picker labels for gpt-5.4", () => {
+    const { labelTokens } = buildModelMatchersLiteralForTest("Thinking");
+    expect(labelTokens).toContain("thinking");
+    expect(labelTokens).toContain("complex questions");
+  });
+
   it("includes pro + 5.4 tokens for gpt-5.4-pro", () => {
     const { labelTokens, testIdTokens } = buildModelMatchersLiteralForTest("gpt-5.4-pro");
     expect(labelTokens.some((t) => t.includes("pro"))).toBe(true);
@@ -67,6 +79,9 @@ describe("browser model selection matchers", () => {
   it("closes the menu after a successful selection path", () => {
     const expression = buildModelSelectionExpressionForTest("gpt-5.4");
     expect(expression).toContain("const closeMenu = () =>");
+    expect(expression).toContain("const resolveSelectionLabel = (fallback) =>");
+    expect(expression).toContain("const refreshedMatch = findBestOption();");
+    expect(expression).toContain("optionIsSelected(refreshedMatch.node)");
     expect(expression).toContain("key: 'Escape'");
     expect(expression).toContain("closeMenu();");
   });
