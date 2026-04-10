@@ -11,6 +11,7 @@ import {
 import { delay } from "../utils.js";
 import { logDomFailure } from "../domDebug.js";
 import { buildClickDispatcher } from "./domEvents.js";
+import { createChatGptRateLimitDialogDismissalPoller } from "./navigation.js";
 import { BrowserAutomationError } from "../../oracle/errors.js";
 
 const ENTER_KEY_EVENT = {
@@ -20,6 +21,7 @@ const ENTER_KEY_EVENT = {
   nativeVirtualKeyCode: 13,
 } as const;
 const ENTER_KEY_TEXT = "\r";
+const SUBMIT_BLOCKING_DIALOG_POLL_INTERVAL_MS = 1_000;
 
 export async function submitPrompt(
   deps: {
@@ -226,6 +228,7 @@ export async function submitPrompt(
     commitTimeoutMs,
     logger,
     deps.baselineTurns ?? undefined,
+    input,
   );
 }
 
@@ -347,7 +350,7 @@ export function buildAttachmentReadyExpressionForTest(attachmentNames: string[])
 
 async function attemptSendButton(
   Runtime: ChromeClient["Runtime"],
-  _logger?: BrowserLogger,
+  logger?: BrowserLogger,
   attachmentNames?: string[],
 ): Promise<boolean> {
   const script = `(() => {
@@ -376,7 +379,15 @@ async function attemptSendButton(
   })()`;
 
   const deadline = Date.now() + 8_000;
+  const pollRateLimitDialog = createChatGptRateLimitDialogDismissalPoller(
+    Runtime,
+    logger,
+    SUBMIT_BLOCKING_DIALOG_POLL_INTERVAL_MS,
+  );
   while (Date.now() < deadline) {
+    if (await pollRateLimitDialog().catch(() => false)) {
+      await delay(500);
+    }
     const needAttachment = Array.isArray(attachmentNames) && attachmentNames.length > 0;
     if (needAttachment) {
       const ready = await Runtime.evaluate({
@@ -406,6 +417,7 @@ async function verifyPromptCommitted(
   timeoutMs: number,
   logger?: BrowserLogger,
   baselineTurns?: number,
+  input?: ChromeClient["Input"],
 ): Promise<number | null> {
   const deadline = Date.now() + timeoutMs;
   const encodedPrompt = JSON.stringify(prompt.trim());
@@ -434,6 +446,13 @@ async function verifyPromptCommitted(
     }
   }
   const baselineLiteral = baseline ?? -1;
+  const pollRateLimitDialog = logger
+    ? createChatGptRateLimitDialogDismissalPoller(
+        Runtime,
+        logger,
+        SUBMIT_BLOCKING_DIALOG_POLL_INTERVAL_MS,
+      )
+    : null;
   // Learned: ChatGPT can echo/format text; normalize markdown and use prefix matches to detect the sent prompt.
   const script = `(() => {
 		    const editor = document.querySelector(${primarySelectorLiteral});
@@ -511,6 +530,12 @@ async function verifyPromptCommitted(
   })()`;
 
   while (Date.now() < deadline) {
+    if (pollRateLimitDialog) {
+      const dismissed = await pollRateLimitDialog().catch(() => false);
+      if (dismissed) {
+        await retrySubmitAfterBlockingDialog(Runtime, input, logger);
+      }
+    }
     const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
     const info = result.value as {
       baseline?: number;
@@ -563,6 +588,32 @@ async function verifyPromptCommitted(
     );
   }
   throw new Error("Prompt did not appear in conversation before timeout (send may have failed)");
+}
+
+async function retrySubmitAfterBlockingDialog(
+  Runtime: ChromeClient["Runtime"],
+  input?: ChromeClient["Input"],
+  logger?: BrowserLogger,
+): Promise<void> {
+  await delay(250);
+  if (await attemptSendButton(Runtime, logger).catch(() => false)) {
+    logger?.("Retried prompt submission after dismissing blocking dialog");
+    return;
+  }
+  if (!input) {
+    return;
+  }
+  await input.dispatchKeyEvent({
+    type: "keyDown",
+    ...ENTER_KEY_EVENT,
+    text: ENTER_KEY_TEXT,
+    unmodifiedText: ENTER_KEY_TEXT,
+  });
+  await input.dispatchKeyEvent({
+    type: "keyUp",
+    ...ENTER_KEY_EVENT,
+  });
+  logger?.("Retried prompt submission via Enter after dismissing blocking dialog");
 }
 
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
