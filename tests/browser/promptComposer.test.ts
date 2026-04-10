@@ -72,4 +72,45 @@ describe("promptComposer", () => {
       promptComposer.verifyPromptCommitted(runtime as never, "hello", 150),
     ).resolves.toBe(1);
   });
+
+  test("dismisses ChatGPT's too-quickly dialog while waiting for commit", async () => {
+    const logger = vi.fn();
+    const runtime = {
+      evaluate: vi
+        .fn()
+        // Baseline read.
+        .mockResolvedValueOnce({ result: { value: 10 } })
+        // Commit-phase rate-limit dialog dismissor.
+        .mockResolvedValueOnce({ result: { value: { dismissed: true, label: "got it" } } })
+        // Retry send-button dialog check.
+        .mockResolvedValueOnce({ result: { value: { dismissed: false } } })
+        // Retry send-button click.
+        .mockResolvedValueOnce({ result: { value: "clicked" } })
+        // Commit check still succeeds after the modal is dismissed.
+        .mockResolvedValueOnce({
+          result: {
+            value: {
+              baseline: 10,
+              turnsCount: 11,
+              userMatched: true,
+              prefixMatched: false,
+              lastMatched: true,
+              hasNewTurn: true,
+              stopVisible: false,
+              assistantVisible: false,
+              composerCleared: true,
+              inConversation: true,
+            },
+          },
+        }),
+    } as unknown as {
+      evaluate: (args: { expression: string; returnByValue?: boolean }) => Promise<unknown>;
+    };
+
+    await expect(
+      promptComposer.verifyPromptCommitted(runtime as never, "hello", 150, logger),
+    ).resolves.toBe(11);
+
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining("rate-limit dialog"));
+  });
 });

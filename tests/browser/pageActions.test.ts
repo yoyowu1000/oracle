@@ -9,6 +9,8 @@ import {
   ensurePromptReady,
   ensureNotBlocked,
   ensureLoggedIn,
+  dismissChatGptRateLimitDialog,
+  createChatGptRateLimitDialogDismissalPoller,
 } from "../../src/browser/pageActions.js";
 import * as attachments from "../../src/browser/actions/attachments.js";
 import * as attachmentDataTransfer from "../../src/browser/actions/attachmentDataTransfer.js";
@@ -126,6 +128,55 @@ describe("navigateToChatGPT", () => {
     );
     expect(navigate).toHaveBeenCalledWith({ url: "https://chat.openai.com" });
     expect(runtime.evaluate).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("dismissChatGptRateLimitDialog", () => {
+  test("clicks the too-quickly dialog confirmation", async () => {
+    let expression = "";
+    const runtime = {
+      evaluate: vi.fn().mockImplementation(async (params: { expression?: string }) => {
+        expression = String(params?.expression ?? "");
+        return { result: { value: { dismissed: true, label: "got it" } } };
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    await expect(dismissChatGptRateLimitDialog(runtime, logger)).resolves.toBe(true);
+
+    expect(expression).toContain("making requests too quickly");
+    expect(expression).toContain("temporarily limited access to your conversations");
+    expect(expression).toContain("got it");
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining("rate-limit dialog"));
+  });
+
+  test("does not click unrelated dialogs", async () => {
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({ result: { value: { dismissed: false } } }),
+    } as unknown as ChromeClient["Runtime"];
+
+    await expect(dismissChatGptRateLimitDialog(runtime, logger)).resolves.toBe(false);
+
+    expect(logger).not.toHaveBeenCalled();
+  });
+
+  test("rate-limit dialog poller throttles checks", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn().mockResolvedValue({ result: { value: { dismissed: false } } }),
+      } as unknown as ChromeClient["Runtime"];
+      const poll = createChatGptRateLimitDialogDismissalPoller(runtime, logger, 30_000);
+
+      await poll();
+      await poll();
+      expect(runtime.evaluate).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await poll();
+      expect(runtime.evaluate).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
