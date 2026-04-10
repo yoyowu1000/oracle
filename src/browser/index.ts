@@ -36,6 +36,7 @@ import {
   waitForAttachmentCompletion,
   waitForUserTurnAttachments,
   readAssistantSnapshot,
+  dismissChatGptRateLimitDialog,
 } from "./pageActions.js";
 import { INPUT_SELECTORS } from "./constants.js";
 import { uploadAttachmentViaDataTransfer } from "./actions/remoteFileTransfer.js";
@@ -517,6 +518,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         if (!DOM) {
           throw new Error("Chrome DOM domain unavailable while uploading attachments.");
         }
+        await dismissChatGptRateLimitDialog(Runtime, logger).catch(() => false);
         await clearComposerAttachments(Runtime, 5_000, logger);
         for (
           let attachmentIndex = 0;
@@ -524,6 +526,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           attachmentIndex += 1
         ) {
           const attachment = submissionAttachments[attachmentIndex];
+          await dismissChatGptRateLimitDialog(Runtime, logger).catch(() => false);
           logger(`Uploading attachment: ${attachment.displayPath}`);
           const uiConfirmed = await uploadAttachmentFile(
             { runtime: Runtime, dom: DOM, input: Input },
@@ -544,6 +547,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         try {
           await waitForAttachmentCompletion(Runtime, waitBudget, attachmentNames, logger);
           logger("All attachments uploaded");
+          await dismissChatGptRateLimitDialog(Runtime, logger).catch(() => false);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (/Attachments did not finish uploading before timeout/i.test(message)) {
