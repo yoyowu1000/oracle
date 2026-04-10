@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Browser: automatically dismiss ChatGPT's "making requests too quickly" dialog before browser-mode uploads/submission so it does not block prompt or attachment sending.
+
 ## 0.9.0 — 2026-03-08
 
 ### Changed
