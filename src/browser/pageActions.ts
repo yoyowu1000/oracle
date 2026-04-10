@@ -5,6 +5,8 @@ export {
   ensureLoggedIn,
   ensurePromptReady,
   installJavaScriptDialogAutoDismissal,
+  dismissChatGptRateLimitDialog,
+  createChatGptRateLimitDialogDismissalPoller,
 } from "./actions/navigation.js";
 export { ensureModelSelection } from "./actions/modelSelection.js";
 export { submitPrompt, clearPromptComposer } from "./actions/promptComposer.js";

@@ -4,6 +4,8 @@ import { delay } from "../utils.js";
 import { logDomFailure } from "../domDebug.js";
 import { BrowserAutomationError } from "../../oracle/errors.js";
 
+export const CHATGPT_RATE_LIMIT_DIALOG_POLL_INTERVAL_MS = 30_000;
+
 export function installJavaScriptDialogAutoDismissal(
   Page: ChromeClient["Page"],
   logger: BrowserLogger,
@@ -76,6 +78,9 @@ async function dismissBlockingUi(
   Runtime: ChromeClient["Runtime"],
   logger: BrowserLogger,
 ): Promise<boolean> {
+  if (await dismissChatGptRateLimitDialog(Runtime, logger).catch(() => false)) {
+    return true;
+  }
   const outcome = await Runtime.evaluate({
     expression: `(() => {
       const isVisible = (el) => {
@@ -132,6 +137,86 @@ async function dismissBlockingUi(
     return true;
   }
   return false;
+}
+
+export async function dismissChatGptRateLimitDialog(
+  Runtime: ChromeClient["Runtime"],
+  logger?: BrowserLogger,
+): Promise<boolean> {
+  const outcome = await Runtime.evaluate({
+    expression: `(() => {
+      const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+      const markers = [
+        'making requests too quickly',
+        'temporarily limited access to your conversations',
+        'please wait a few minutes before trying again',
+      ];
+      const isVisible = (el) => {
+        if (!(el instanceof HTMLElement)) return false;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        const style = window.getComputedStyle(el);
+        if (!style) return false;
+        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+      };
+      const labelFor = (el) => normalize(
+        el?.textContent || el?.getAttribute?.('aria-label') || el?.getAttribute?.('title'),
+      );
+      const matchesRateLimitText = (root) => {
+        const text = normalize(root?.innerText || root?.textContent || '');
+        return markers.some((marker) => text.includes(marker));
+      };
+      const modalSelectors = [
+        '[role="dialog"]',
+        'dialog',
+        '[data-testid*="modal"]',
+        '[data-testid*="dialog"]',
+      ];
+      const roots = Array.from(document.querySelectorAll(modalSelectors.join(',')))
+        .filter((el) => isVisible(el) && matchesRateLimitText(el));
+      if (document.body && matchesRateLimitText(document.body)) {
+        roots.push(document.body);
+      }
+      const root = roots[0];
+      if (!root) {
+        return { dismissed: false };
+      }
+      const buttons = Array.from(root.querySelectorAll('button,[role="button"],a'))
+        .filter((el) => isVisible(el));
+      const confirm = buttons.find((el) => {
+        const label = labelFor(el);
+        return label === 'got it' || label === 'ok' || label === 'okay' || label === 'dismiss';
+      });
+      if (!confirm) {
+        return { dismissed: false, matched: true };
+      }
+      confirm.click();
+      return { dismissed: true, label: labelFor(confirm) };
+    })()`,
+    returnByValue: true,
+  }).catch(() => null);
+  const value = outcome?.result?.value as { dismissed?: boolean; label?: string } | undefined;
+  if (value?.dismissed) {
+    logger?.(`[nav] dismissed ChatGPT rate-limit dialog (${value.label ?? "confirm"})`);
+    return true;
+  }
+  return false;
+}
+
+export function createChatGptRateLimitDialogDismissalPoller(
+  Runtime: ChromeClient["Runtime"],
+  logger?: BrowserLogger,
+  intervalMs = CHATGPT_RATE_LIMIT_DIALOG_POLL_INTERVAL_MS,
+): (force?: boolean) => Promise<boolean> {
+  let nextPollAt = 0;
+  return async (force = false): Promise<boolean> => {
+    const now = Date.now();
+    if (!force && now < nextPollAt) {
+      return false;
+    }
+    nextPollAt = now + intervalMs;
+    return await dismissChatGptRateLimitDialog(Runtime, logger);
+  };
 }
 
 export async function navigateToPromptReadyWithFallback(
